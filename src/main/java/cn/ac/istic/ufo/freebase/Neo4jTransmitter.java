@@ -13,7 +13,7 @@ import java.util.Map;
 public class Neo4jTransmitter {
     public static void main(String[] args) {
         if (args.length < 2)
-            System.err.println("Usage: de.mpii.d5.neo4j.Main freebasePath "
+            System.err.println("Usage: freebasePath "
                     + "noe4jDatabaseDir [#triples]");
 
         String freebasePath = args[0];
