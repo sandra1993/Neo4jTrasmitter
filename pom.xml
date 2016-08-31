@@ -51,7 +51,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>fully.qualified.MainClass</mainClass>
+                            <mainClass>cn.ac.istic.ufo.freebase.Neo4jTransmitter</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>
