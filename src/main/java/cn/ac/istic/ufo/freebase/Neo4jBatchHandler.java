@@ -73,9 +73,6 @@ public class Neo4jBatchHandler {
 
                 // object resource
                 String objectStr = fields[2].trim();
-                // at the end of each object there is dot
-
-                objectStr = objectStr.substring(0, objectStr.length() - 1);
 
                 Resource objectResource = new Resource(objectStr);
                 String val = "";
