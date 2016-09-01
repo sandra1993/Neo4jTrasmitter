@@ -117,10 +117,12 @@ public class Neo4jBatchHandler {
     }
 
     public void createProperty(long predicateNodeId, long subjectNodeId, Resource objectNode) {
-        tmpIndex.put(objectNode.getValue(), this.getDao().getSession()
-                .run("CREATE (n:Property {propertyValue:{value}}) return ID(n);",
-                        Values.parameters("value", objectNode.getValue()))
-                .next().get("ID(n)").asLong());
+        if (!tmpIndex.containsKey(objectNode.getValue()))
+            tmpIndex.put(objectNode.getValue(), this.getDao().getSession()
+                    .run("CREATE (n:Property {propertyValue:{value}}) return ID(n);",
+                            Values.parameters("value", objectNode.getValue()))
+                    .next().get("ID(n)").asLong());
+
         this.getDao().run("MATCH (n:Concept),(m:Concept) where ID(n)="
                 + subjectNodeId
                 + " AND "
