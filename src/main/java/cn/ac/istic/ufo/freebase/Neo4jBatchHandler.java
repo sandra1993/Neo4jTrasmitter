@@ -1,5 +1,7 @@
 package cn.ac.istic.ufo.freebase;
 
+import org.neo4j.driver.v1.StatementResult;
+import org.neo4j.driver.v1.Values;
 import org.neo4j.graphdb.DynamicLabel;
 import org.neo4j.graphdb.DynamicRelationshipType;
 import org.neo4j.graphdb.Label;
@@ -12,6 +14,7 @@ import java.io.InputStreamReader;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
@@ -27,161 +30,104 @@ import java.util.zip.GZIPInputStream;
 
 
 public class Neo4jBatchHandler {
-    private int totalTriples = 0;
-    private int addedNodes = 0;
-    private int addedRelationships = 0;
-    private BatchInserter db;
-    // property for each neo4j node which stores resource's id
-    private static final String MID_PROPERTY = "__MID__";
-    // property for each noe4j node which stores preceding prefix of a resource
-    private static final String PREFIX_PROPERTY = "__PREFIX__";
     // <resource id, node id>: to keep track of inserted nodes
     private Map<String, Long> tmpIndex = new HashMap<String, Long>();
-    // <node id, labels>: to keep track of node's labels
-    private Map<Long, HashSet<Label>> labelsMap = new HashMap<Long, HashSet<Label>>();
-    // <node id, properties>: to keep track of node's properties
-    private Map<Long, Map<String, Object>> propsMap = new HashMap<Long, Map<String, Object>>();
 
-    public Neo4jBatchHandler(BatchInserter db) {
-        this.db = db;
+    private Neo4jDAO dao;
+
+    public Neo4jBatchHandler(Neo4jDAO dao) {
+        this.setDao(dao);
     }
 
     /**
      * create noe4j database
      *
-     * @param path            Freebase triples path
-     * @param numberOfTriples number of Freebase triples to read
+     * @param path Freebase triples path
      */
-    public void createNeo4jDb(String path, int numberOfTriples) {
+    public void createNeo4jDb(String path) {
         String line = "";
         try {
-            int count = 0;
-            int millions = 0;
             // Specifying encoding is important to store data properly
             BufferedReader br = new BufferedReader(new InputStreamReader(
                     new GZIPInputStream(new FileInputStream(path)), "UTF-8"));
 
             line = br.readLine();
             while (line != null) {
-                count++;
-                boolean literalObject = false;
                 String[] fields = line.split("\t");
                 // subject resource
                 String subjectStr = fields[0];
                 Resource subjectResource = new Resource(subjectStr);
-                subjectResource.setValues();
 
                 // object resource
                 String objectStr = fields[2].trim();
 
                 Resource objectResource = new Resource(objectStr);
-                String val = "";
-                if (!objectResource.isLiteral()) {
-                    // entity, example: fb:m.0n7x41f
-                    objectResource.setValues();
-                } else {
-                    // literal
-                    literalObject = true;
-                    val = objectResource.handleLiteral();
-                }
                 // predicate resource
                 String predicateStr = fields[1];
                 Resource predicateResource = new Resource(predicateStr);
-                predicateResource.setValues();
 
-                // Check subject node existence
-                Long subjectNodeId = tmpIndex.get(subjectResource.getId());
-                if (subjectNodeId == null) {
-                    subjectNodeId = this.createNeo4jNode(subjectResource);
-                }
-                if (literalObject) {
-                    this.insertLiteralValueAsProp(subjectNodeId, predicateResource, val);
-                } else {
-                    // Check object node existence
-                    Long objectNodeId = tmpIndex.get(objectResource.getId());
-                    if (objectNodeId == null) {
-                        objectNodeId = this.createNeo4jNode(objectResource);
-                    }
-                    // create relation between subject and object nodes
-                    createNeo4jRelation(predicateResource, subjectNodeId, objectNodeId);
-                }
-                totalTriples++;
-                if (totalTriples == numberOfTriples) {
-                    break;
-                }
-                // print every 10M triples
-                if (count == 10000000) {
-                    millions += 10;
-                    System.out.println("triples = " + millions + "M");
-                    count = 0;
-                }
+                if (!tmpIndex.containsKey(subjectResource.getValue()))
+                    this.createNeo4jNode(subjectResource);
+
+                if (!tmpIndex.containsKey(predicateResource.getValue()))
+                    this.createNeo4jNode(predicateResource);
+
+                if (!objectResource.isLiteral()) {
+                    if (!tmpIndex.containsKey(objectResource.getValue()))
+                        this.createNeo4jNode(objectResource);
+                    this.createNeo4jRelation(tmpIndex.get(predicateResource.getValue()),
+                            tmpIndex.get(subjectResource.getValue()),
+                            tmpIndex.get(objectResource.getValue()));
+                } else
+                    this.createProperty(tmpIndex.get(predicateResource.getValue())
+                            , tmpIndex.get(subjectResource.getValue()), objectResource);
 
                 line = br.readLine();
             }
             br.close();
-            System.out.println("totalTriples = " + totalTriples + " : "
-                    + "addedRelationships = " + addedRelationships + " : "
-                    + "addedNodes = " + addedNodes);
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    /**
-     * store literal value as property of the subject node
-     *
-     * @param subId subject id
-     * @param r     resource object
-     * @param val   literal value
-     */
-    private void insertLiteralValueAsProp(Long subId, Resource r, String val) {
-        Map<String, Object> nodeProps = propsMap.get(subId);
-        if (nodeProps == null) {
-            nodeProps = new HashMap<String, Object>();
-            propsMap.put(subId, nodeProps);
-        }
-        nodeProps.put(r.getId(), val);
-        db.setNodeProperties(subId, nodeProps);
+    public void createNeo4jNode(Resource resource) {
+        tmpIndex.put(resource.getValue(), this.getDao().run("CREATE (n:Concept {conceptName:\""
+                + resource.getValue()
+                + "\"}) return ID(n);").next().get("ID(n)").asLong());
     }
 
-    /**
-     * create neo4j node with label "Entity"
-     *
-     * @param resource either subject or object
-     * @return nodeId an automatically generated id once a node is stored in noe4j DB
-     */
-    private Long createNeo4jNode(Resource resource) {
-        Map<String, Object> props = new HashMap<String, Object>();
-        props.put(MID_PROPERTY, resource.getId());
-        props.put(PREFIX_PROPERTY, resource.getPrefix());
-        Long nodeId = db.createNode(props);
-        propsMap.put(nodeId, props);
-        tmpIndex.put(resource.getId(), nodeId);
-        addedNodes++;
-        Label label = DynamicLabel.label("Entity");
-        HashSet<Label> labels = labelsMap.get(nodeId);
-        if (labels == null) {
-            labels = new HashSet<Label>();
-            labelsMap.put(nodeId, labels);
-        }
-        labels.add(label);
-        db.setNodeLabels(nodeId, labels.toArray(new Label[labels.size()]));
-        return nodeId;
+    public void createNeo4jRelation(long predicateNodeId, long subjectNodeId,
+                                    long objectNodeId) {
+        this.getDao().run("MATCH (n:Concept),(m:Concept) where ID(n)="
+                + subjectNodeId
+                + " AND "
+                + "ID(m)="
+                + objectNodeId
+                + " CREATE (n)-[:Relationship {ConceptID:"
+                + predicateNodeId
+                + "}]->(m) RETURN n;");
     }
 
-    /**
-     * create neo4j relationship between two nodes
-     *
-     * @param predicateResource predicate
-     * @param subjectNodeId     subject node id
-     * @param objectNodeId      object node id
-     */
-    private void createNeo4jRelation(Resource predicateResource, long subjectNodeId,
-                                     long objectNodeId) {
-        RelationshipType relType = DynamicRelationshipType.withName(predicateResource.getId());
-        Map<String, Object> props = new HashMap<String, Object>();
-        props.put(PREFIX_PROPERTY, predicateResource.getPrefix());
-        db.createRelationship(subjectNodeId, objectNodeId, relType, props);
-        addedRelationships++;
+    public Neo4jDAO getDao() {
+        return dao;
+    }
+
+    public void setDao(Neo4jDAO dao) {
+        this.dao = dao;
+    }
+
+    public void createProperty(long predicateNodeId, long subjectNodeId, Resource objectNode) {
+        tmpIndex.put(objectNode.getValue(), this.getDao().getSession()
+                .run("CREATE (n:Property {propertyValue:{value}}) return ID(n);",
+                        Values.parameters("value", objectNode.getValue()))
+                .next().get("ID(n)").asLong());
+        this.getDao().run("MATCH (n:Concept),(m:Concept) where ID(n)="
+                + subjectNodeId
+                + " AND "
+                + "ID(m)="
+                + tmpIndex.get(objectNode.getValue())
+                + " CREATE (n)-[:Relationship {ConceptID:"
+                + predicateNodeId
+                + "}]->(m) RETURN n;");
     }
 }
