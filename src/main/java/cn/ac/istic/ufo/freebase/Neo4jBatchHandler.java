@@ -1,20 +1,12 @@
 package cn.ac.istic.ufo.freebase;
 
-import org.neo4j.driver.v1.StatementResult;
 import org.neo4j.driver.v1.Values;
-import org.neo4j.graphdb.DynamicLabel;
-import org.neo4j.graphdb.DynamicRelationshipType;
-import org.neo4j.graphdb.Label;
-import org.neo4j.graphdb.RelationshipType;
-import org.neo4j.unsafe.batchinsert.BatchInserter;
 
 import java.io.BufferedReader;
 import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**

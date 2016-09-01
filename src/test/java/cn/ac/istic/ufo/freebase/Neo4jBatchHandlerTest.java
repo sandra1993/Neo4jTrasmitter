@@ -1,15 +1,6 @@
 package cn.ac.istic.ufo.freebase;
 
 import org.junit.Test;
-import org.neo4j.driver.v1.StatementResult;
-import org.neo4j.unsafe.batchinsert.BatchInserter;
-import org.neo4j.unsafe.batchinsert.BatchInserters;
-
-import java.io.File;
-import java.util.HashMap;
-import java.util.Map;
-
-import static org.junit.Assert.*;
 
 /**
  * Created by ufo on 8/31/16.
