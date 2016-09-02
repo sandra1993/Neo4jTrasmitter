@@ -5,15 +5,12 @@ package cn.ac.istic.ufo.freebase;
  */
 public class Neo4jTransmitter {
     public static void main(String[] args) {
-        if (args.length < 4)
+        if (args.length < 2)
             System.err.println("Usage: freebasePath "
-                    + "noe4jDatabasePath "
-                    + "userName"
-                    + "userPwd"
-                    + "[#triples]");
+                    + "noe4jDatabasePath ");
 
         Neo4jBatchHandler handler =
-                new Neo4jBatchHandler(new Neo4jDAO(args[1], args[2], args[3]));
+                new Neo4jBatchHandler(args[1]);
         handler.createNeo4jDb(args[0]);
     }
 }

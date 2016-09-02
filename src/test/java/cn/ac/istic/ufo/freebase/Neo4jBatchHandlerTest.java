@@ -8,12 +8,10 @@ import org.junit.Test;
 public class Neo4jBatchHandlerTest {
     @Test
     public void parse(){
-        String databaseDir="bolt://192.168.31.237";
-        String userName="neo4j";
-        String userPwd="ufowzh13524645";
+        String databaseDir="/home/ufo/test.db";
         String freebasePath="/home/ufo/1.gz";
         Neo4jBatchHandler handler =
-                new Neo4jBatchHandler(new Neo4jDAO(databaseDir, userName, userPwd));
+                new Neo4jBatchHandler(databaseDir);
         handler.createNeo4jDb(freebasePath);
     }
 }

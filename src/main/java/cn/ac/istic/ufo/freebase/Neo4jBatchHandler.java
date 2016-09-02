@@ -1,60 +1,61 @@
 package cn.ac.istic.ufo.freebase;
 
-import org.neo4j.driver.v1.Session;
-import org.neo4j.driver.v1.Values;
+import org.neo4j.graphdb.*;
+import org.neo4j.graphdb.factory.GraphDatabaseFactory;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.zip.GZIPInputStream;
 
-/**
- * Load Freebase triples into a neo4j graph database.
- * Each noe4j node has a label called Entity to enable us to create schema
- * indexes over node properties e.g., __MID__.
- * Each node has two properties: __MID__, __PREFIX__.
- * Literal objects are stored as properties of the subject
- *
- * @author Abdalghani Abujabal - abujabal@mpi-inf.mpg.de
- * @version 1.0
- */
-
-
 public class Neo4jBatchHandler {
-    private Map<String, Long> tmpIndex = new ConcurrentHashMap<String, Long>();
-    private Neo4jDAO dao;
+    private Map<String, Node> tmpIndex = new ConcurrentHashMap<String, Node>();
+    private GraphDatabaseService graphDb;
 
-    private LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<String>(10);
+    private LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<String>(1000);
     private Boolean flag = true;
     private String path;
 
-    public Neo4jBatchHandler(Neo4jDAO dao) {
-        this.setDao(dao);
+    protected final Label CONCEPT = Label.label("Concept");
+    protected final Label PROPERTY = Label.label("Property");
+    protected final RelationshipType RELATIONSHIP = RelationshipType.withName("Relationship");
+
+    public Neo4jBatchHandler(String neo4jPath) {
+        this.setGraphDb(new GraphDatabaseFactory().newEmbeddedDatabase(new File(neo4jPath)));
     }
 
     public void createNeo4jDb(String path) {
         this.setPath(path);
-        new Thread(new Neo4jConsumer(this.getDao().getDriver().session())).start();
-        new Thread(new Neo4jConsumer(this.getDao().getDriver().session())).start();
-        new Thread(new Neo4jConsumer(this.getDao().getDriver().session())).start();
+        Thread[] threads = new Thread[3];
+        for (int i = 0; i < threads.length; i++) {
+            threads[i] = new Thread(new Neo4jConsumer());
+            threads[i].start();
+        }
+
         new Neo4jProducer().run();
-    }
-
-    public Neo4jDAO getDao() {
-        return dao;
-    }
-
-    public void setDao(Neo4jDAO dao) {
-        this.dao = dao;
+        int count = 0;
+        while (count < threads.length) {
+            count = 0;
+            for (int i = 0; i < threads.length; i++)
+                count += !threads[i].isAlive() ? 1 : 0;
+        }
+        graphDb.shutdown();
     }
 
     public void setPath(String path) {
         this.path = path;
+    }
+
+    public GraphDatabaseService getGraphDb() {
+        return graphDb;
+    }
+
+    public void setGraphDb(GraphDatabaseService graphDb) {
+        this.graphDb = graphDb;
     }
 
 
@@ -67,9 +68,13 @@ public class Neo4jBatchHandler {
                         new GZIPInputStream(new FileInputStream(path)), "UTF-8"));
 
                 line = br.readLine();
+                int c = 0;
                 while (line != null) {
                     queue.put(line);
                     line = br.readLine();
+                    c++;
+                    if (c > 2000)
+                        break;
                 }
                 flag = false;
                 br.close();
@@ -80,49 +85,51 @@ public class Neo4jBatchHandler {
     }
 
     class Neo4jConsumer implements Runnable {
-        private Session session;
-        public Neo4jConsumer(Session session){
-            this.setSession(session);
+        public Neo4jConsumer() {
         }
 
         public void createNeo4jNode(Resource resource) {
             synchronized (tmpIndex) {
+                Node node;
                 if (!tmpIndex.containsKey(resource.getValue()))
-                    tmpIndex.put(resource.getValue(), this.getSession().run("CREATE (n:Concept {conceptName:\""
-                            + resource.getValue()
-                            + "\"}) return ID(n);").next().get("ID(n)").asLong());
+                    try (Transaction tx = graphDb.beginTx()) {
+                        node = graphDb.createNode();
+                        node.addLabel(CONCEPT);
+                        node.setProperty("conceptName", resource.getValue());
+                        tmpIndex.put(resource.getValue(), node);
+                        tx.success();
+                    }
             }
         }
 
-        public void createNeo4jRelation(long predicateNodeId, long subjectNodeId,
-                                        long objectNodeId) {
-            this.getSession().run("MATCH (n:Concept),(m:Concept) where ID(n)="
-                    + subjectNodeId
-                    + " AND "
-                    + "ID(m)="
-                    + objectNodeId
-                    + " CREATE (n)-[:Relationship {ConceptID:"
-                    + predicateNodeId
-                    + "}]->(m) RETURN n;");
+        public void createNeo4jRelation(Node predicateNode, Node subjectNode,
+                                        Node objectNode) {
+            try (Transaction tx = graphDb.beginTx()) {
+                Relationship relationship = subjectNode.createRelationshipTo(objectNode, RELATIONSHIP);
+                relationship.setProperty("ConceptId", predicateNode.getId());
+                tx.success();
+            }
         }
 
-        public void createProperty(long predicateNodeId, long subjectNodeId, Resource objectNode) {
+        public void createProperty(Node predicateNode, Node subjectNode, Resource objectNode) {
+            Node node;
             synchronized (tmpIndex) {
                 if (!tmpIndex.containsKey(objectNode.getValue()))
-                    tmpIndex.put(objectNode.getValue(), this.getSession()
-                            .run("CREATE (n:Property {propertyValue:{value}}) return ID(n);",
-                                    Values.parameters("value", objectNode.getValue()))
-                            .next().get("ID(n)").asLong());
+                    try (Transaction tx = graphDb.beginTx()) {
+                        node = graphDb.createNode();
+                        node.addLabel(PROPERTY);
+                        node.setProperty("propertyValue", objectNode.getValue());
+                        tmpIndex.put(objectNode.getValue(), node);
+                        tx.success();
+                    }
             }
+            node = tmpIndex.get(objectNode.getValue());
 
-            this.getSession().run("MATCH (n:Concept),(m:Concept) where ID(n)="
-                    + subjectNodeId
-                    + " AND "
-                    + "ID(m)="
-                    + tmpIndex.get(objectNode.getValue())
-                    + " CREATE (n)-[:Relationship {ConceptID:"
-                    + predicateNodeId
-                    + "}]->(m) RETURN n;");
+            try (Transaction tx = graphDb.beginTx()) {
+                Relationship relationship = subjectNode.createRelationshipTo(node, RELATIONSHIP);
+                relationship.setProperty("ConceptId", predicateNode.getId());
+                tx.success();
+            }
         }
 
         @Override
@@ -151,19 +158,10 @@ public class Neo4jBatchHandler {
                     } else
                         this.createProperty(tmpIndex.get(predicateResource.getValue())
                                 , tmpIndex.get(subjectResource.getValue()), objectResource);
-
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
             }
-        }
-
-        public Session getSession() {
-            return session;
-        }
-
-        public void setSession(Session session) {
-            this.session = session;
         }
     }
 }
